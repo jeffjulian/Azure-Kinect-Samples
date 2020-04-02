@@ -21,6 +21,9 @@ namespace Microsoft.Samples.AzureKinectBasics
     using Microsoft.Azure.CognitiveServices.Vision.ComputerVision.Models;
 
     using System.Collections.Generic;
+    using System.Windows.Controls;
+	using Image = Azure.Kinect.Sensor.Image;
+    using System.Linq;
 
     /// <summary>
     /// Interaction logic for MainWindow
@@ -65,12 +68,12 @@ namespace Microsoft.Samples.AzureKinectBasics
         /// <summary>
         /// Subscription key for Cognitive Services
         /// </summary>
-        private const string subscriptionKey = "YOUR SUBSCRIPTION KEY HERE";
+        private const string subscriptionKey = "f6bb8fdefd294c8793fa31829cbf3477";
 
-        /// <summary>
-        /// Connection to Azure Computer Vision Cognitive Service
-        /// </summary>
-        private ComputerVisionClient computerVision;
+		/// <summary>
+		/// Connection to Azure Computer Vision Cognitive Service
+		/// </summary>
+		private ComputerVisionClient computerVision;
 
         /// <summary>
         /// Bounding box of the person
@@ -118,13 +121,11 @@ namespace Microsoft.Samples.AzureKinectBasics
                 {
                     // You must use the same region as you used to get  
                     // your subscription keys. 
-                    Endpoint = "https://westus.api.cognitive.microsoft.com/"
+                    Endpoint = "https://centralus.api.cognitive.microsoft.com/"
                 };
 
             this.bitmap = new WriteableBitmap(colorWidth, colorHeight, 96.0, 96.0, PixelFormats.Bgra32, null);
-
             this.DataContext = this;
-
             this.InitializeComponent();
         }
 
@@ -242,11 +243,12 @@ namespace Microsoft.Samples.AzureKinectBasics
         private async void Window_Loaded(object sender, RoutedEventArgs e)
         {
             int count = 0;
+			var title = default(string);
 
             while (running)
             {
-                using (Image transformedDepth = new Image(ImageFormat.Depth16, colorWidth, colorHeight, colorWidth * sizeof(UInt16)))
-                using (Capture capture = await Task.Run(() => { return this.kinect.GetCapture(); }))
+                using (var transformedDepth = new Image(ImageFormat.Depth16, colorWidth, colorHeight, colorWidth * sizeof(UInt16)))
+                using (var capture = await Task.Run(() => { return this.kinect.GetCapture(); }))
                 {
                     count++;
 
@@ -269,8 +271,13 @@ namespace Microsoft.Samples.AzureKinectBasics
                             int y = (boundingBox.Y + boundingBox.H / 2);
                             int x = (boundingBox.X + boundingBox.W / 2);
 
-                            this.StatusText = "The person is:" + transformedDepth.GetPixel<ushort>(y, x) + "mm away";
-                        }
+							this.StatusText = $"The {title} is: {transformedDepth.GetPixel<ushort>(y, x)} mm away";
+
+							this.Outline.Width =  boundingBox.W;
+							this.Outline.Height = boundingBox.H;
+							this.Outline.SetValue(Canvas.LeftProperty, boundingBox.X / this.CompositeImage.ActualWidth * this.ImageView.ActualWidth);
+							this.Outline.SetValue(Canvas.TopProperty, boundingBox.Y / this.CompositeImage.ActualHeight * this.ImageView.ActualHeight);
+						}
                     }
 
                     this.bitmap.AddDirtyRect(region);
@@ -278,27 +285,61 @@ namespace Microsoft.Samples.AzureKinectBasics
 
                     if (count % 30 == 0)
                     {
+                        running = false;
+
                         var stream = StreamFromBitmapSource(this.bitmap);
-                        _ = computerVision.AnalyzeImageInStreamAsync(stream, MainWindow.features).ContinueWith((Task<ImageAnalysis> analysis) =>
+                        var text = await computerVision.RecognizePrintedTextInStreamAsync(true, stream, OcrLanguages.En);
+
+                        if(text != null)
                         {
-                            try
+                            foreach(var textRegion in text.Regions)
                             {
-                                foreach (var item in analysis.Result.Objects)
+                                if(textRegion.Lines != null && textRegion.Lines.Any())
                                 {
-                                    if (item.ObjectProperty == "person")
+                                    foreach(var line in textRegion.Lines)
                                     {
-                                        this.boundingBox = item.Rectangle;
+                                        Console.WriteLine(string.Join(" ", line.Words.Select(w => w.Text)));
                                     }
                                 }
                             }
-                            catch (System.Exception ex)
-                            {
-                                this.StatusText = ex.ToString();
-                            }
-                        }, TaskScheduler.FromCurrentSynchronizationContext());
+                        }
+                        // title = await AnalyzeImage().ConfigureAwait(false);
+
+                        running = true;
                     }
+                    
+                
                 }
             }
         }
+
+
+
+        private async Task<string> AnalyzeImage()
+        {
+            var title = default(string);
+            var stream = StreamFromBitmapSource(this.bitmap);
+            var analysis = await computerVision.AnalyzeImageInStreamAsync(stream, MainWindow.features);
+
+            try
+            {
+                foreach (var item in analysis.Objects)
+                {
+                    //if (item.ObjectProperty == "person")
+                    //{
+                    title = item.ObjectProperty;
+                    this.boundingBox = item.Rectangle;
+
+                    //}
+                }
+            }
+            catch (System.Exception ex)
+            {
+                this.StatusText = ex.ToString();
+            }
+
+            return title;
+        }
+
     }
 }
